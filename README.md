@@ -10,13 +10,18 @@ hull share ./report.html --expires 24h
 ## Install
 
 ```bash
-npm install -g hull-cli
+curl -fsSL https://raw.githubusercontent.com/piyush0609/hull/main/install.sh | sh
 ```
 
-Requires:
-- Node.js 18+
+The installer detects your OS/arch, downloads the latest binary from [GitHub Releases](https://github.com/piyush0609/hull/releases), and installs it to `/usr/local/bin` (or `~/.local/bin`).
+
+**Fallback:** If the binary download fails, it falls back to `npm install -g hull-cli`.
+
+**Requirements for deploy:**
 - [Wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/) (`npm install -g wrangler`)
 - A Cloudflare account with a [workers.dev subdomain](https://dash.cloudflare.com/workers/onboarding)
+
+> **Note:** `hull deploy` calls Wrangler, which requires Node.js. The hull binary itself has no runtime dependencies.
 
 ## Quick Start
 
@@ -135,6 +140,21 @@ hull share ./skill-dashboard.html --expires 30d
 ```
 
 The link can then be referenced in a skill's `SKILL.md` as a live demo or embedded tool. For fully offline skills, copy the HTML into the skill directory instead.
+
+## Development
+
+```bash
+git clone https://github.com/piyush0609/hull.git
+cd hull
+npm install
+npm run build
+npm test
+```
+
+Build standalone binaries:
+```bash
+npm run build:bin   # or ./build.sh
+```
 
 ## License
 
