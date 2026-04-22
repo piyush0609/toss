@@ -57,9 +57,6 @@ if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     cd "$SRC_DIR"
     npm install --production --silent
 
-    # Build
-    npm run build --silent
-
     # Install wrapper script
     BIN_DIR="${HOME}/.local/bin"
     mkdir -p "$BIN_DIR"
