@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-bin/
+.env
+.DS_Store
+*.log
+.idea/
+hull
+hello.html
+
