@@ -7,6 +7,7 @@ import { revokeCommand } from './commands/revoke.js';
 import { destroyCommand } from './commands/destroy.js';
 import { doctorCommand } from './commands/doctor.js';
 import { infoCommand } from './commands/info.js';
+import { setupCommand } from './commands/setup.js';
 
 const program = new Command();
 
@@ -42,6 +43,11 @@ program
   .command('destroy')
   .description('Destroy your hull infrastructure')
   .action(destroyCommand);
+
+program
+  .command('setup')
+  .description('One-time setup: install wrangler, login, check subdomain')
+  .action(setupCommand);
 
 program
   .command('doctor')

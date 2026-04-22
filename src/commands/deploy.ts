@@ -120,50 +120,19 @@ async function setSecret(cwd: string, name: string, value: string): Promise<void
 export async function deployCommand() {
   console.log('Setting up your hull on Cloudflare...\n');
 
-  // Check wrangler — offer to install if missing
-  let wranglerVersion = '';
+  // Quick prereq check — direct to setup if anything is missing
   try {
-    const { stdout } = await execAsync('wrangler --version');
-    wranglerVersion = stdout.trim();
+    await execAsync('wrangler --version');
   } catch {
-    const answer = await prompt('Wrangler not found. Install now? (y/n): ');
-    if (answer.toLowerCase() !== 'y') {
-      console.error('Please install Wrangler: npm install -g wrangler');
-      process.exit(1);
-    }
-    console.log('Installing wrangler...');
-    try {
-      await execAsync('npm install -g wrangler');
-      const { stdout } = await execAsync('wrangler --version');
-      wranglerVersion = stdout.trim();
-      console.log(`✓ Wrangler ${wranglerVersion} installed`);
-    } catch (err: any) {
-      console.error('Failed to install wrangler:', err.stderr || err.message);
-      process.exit(1);
-    }
+    console.error('❌ Wrangler not found. Run: hull setup');
+    process.exit(1);
   }
 
-  // Check auth — run login if needed
-  let authOk = false;
   try {
     await execAsync('wrangler whoami');
-    authOk = true;
   } catch {
-    console.log('Not authenticated with Cloudflare.');
-    const answer = await prompt('Run wrangler login now? (y/n): ');
-    if (answer.toLowerCase() !== 'y') {
-      console.error('Please run: wrangler login');
-      process.exit(1);
-    }
-    console.log('Opening browser for Cloudflare login...');
-    console.log('(Scopes: account:read, workers_scripts:write, workers_kv:write, d1:write, zone:read)');
-    try {
-      await execAsync('wrangler login --scopes account:read workers_scripts:write workers_kv:write d1:write zone:read');
-      authOk = true;
-    } catch (err: any) {
-      console.error('Login failed:', err.stderr || err.message);
-      process.exit(1);
-    }
+    console.error('❌ Not authenticated with Cloudflare. Run: hull setup');
+    process.exit(1);
   }
 
   const subdomain = process.env.HULL_SUBDOMAIN || await prompt('Choose a subdomain (e.g., yourname): ');
