@@ -52,10 +52,13 @@ if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
       exit 1
     fi
 
-    # Install production dependencies (just commander)
+    # Install dependencies and build
     echo "Installing dependencies..."
     cd "$SRC_DIR"
-    npm install --production --silent
+    npm install --silent
+
+    echo "Building..."
+    npm run build --silent
 
     # Install wrapper script
     BIN_DIR="${HOME}/.local/bin"
