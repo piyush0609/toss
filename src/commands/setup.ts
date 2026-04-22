@@ -180,7 +180,12 @@ export async function setupCommand() {
   // Verify auth again with a real API call
   console.log('\nVerifying token works with Cloudflare API...');
   try {
-    await execAsync('wrangler kv namespace list');
+    const { stdout } = await execAsync('wrangler whoami');
+    const accountId = getAccountIdFromWhoami(stdout);
+    const verifyCmd = accountId
+      ? `CLOUDFLARE_ACCOUNT_ID=${accountId} wrangler kv namespace list`
+      : 'wrangler kv namespace list';
+    await execAsync(verifyCmd);
     console.log('✅ Token verified');
   } catch (err: any) {
     const errMsg = err.stderr || err.message || '';
