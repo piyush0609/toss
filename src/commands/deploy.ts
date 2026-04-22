@@ -71,33 +71,33 @@ async function copyDir(src: string, dest: string): Promise<void> {
   }
 }
 
-async function wranglerJSON(cmd: string): Promise<string> {
-  const { stdout } = await execAsync(cmd);
-  return stdout;
+async function wranglerJSON(cmd: string, env?: { env: NodeJS.ProcessEnv }): Promise<string> {
+  const { stdout } = await execAsync(cmd, env);
+  return typeof stdout === 'string' ? stdout : stdout.toString();
 }
 
-async function createKV(title: string): Promise<string> {
+async function createKV(title: string, env?: { env: NodeJS.ProcessEnv }): Promise<string> {
   try {
-    const out = await wranglerJSON(`wrangler kv namespace create "${title}"`);
+    const out = await wranglerJSON(`wrangler kv namespace create "${title}"`, env);
     const m = out.match(/"id":\s*"([a-f0-9]+)"/) || out.match(/([a-f0-9]{32})/);
     if (m) return m[1];
   } catch (err: any) {
     if (!err.stderr?.includes('already exists')) throw err;
-    const out = await wranglerJSON('wrangler kv namespace list');
+    const out = await wranglerJSON('wrangler kv namespace list', env);
     const m = out.match(new RegExp(`"id"\\s*:\\s*"([a-f0-9]{32})".*"title"\\s*:\\s*"${title}"`, 's'));
     if (m) return m[1];
   }
   throw new Error('Could not create or find KV namespace');
 }
 
-async function createD1(name: string): Promise<string> {
+async function createD1(name: string, env?: { env: NodeJS.ProcessEnv }): Promise<string> {
   try {
-    const out = await wranglerJSON(`wrangler d1 create ${name}`);
+    const out = await wranglerJSON(`wrangler d1 create ${name}`, env);
     const m = out.match(/"database_id":\s*"([a-f0-9-]+)"/) || out.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/);
     if (m) return m[1];
   } catch (err: any) {
     if (!err.stderr?.includes('already exists')) throw err;
-    const out = await wranglerJSON('wrangler d1 list');
+    const out = await wranglerJSON('wrangler d1 list', env);
     const m = out.match(new RegExp(`([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}).*${name}`));
     if (m) return m[1];
   }
@@ -128,12 +128,16 @@ export async function deployCommand() {
     process.exit(1);
   }
 
+  // Check auth and extract account ID for multi-account users
+  let accountId = '';
   try {
     const { stdout } = await execAsync('wrangler whoami');
     if (stdout.includes('not authenticated')) {
       console.error('❌ Not authenticated with Cloudflare. Run: hull setup');
       process.exit(1);
     }
+    const match = stdout.match(/([a-f0-9]{32})/);
+    if (match) accountId = match[1];
   } catch {
     console.error('❌ Not authenticated with Cloudflare. Run: hull setup');
     process.exit(1);
@@ -152,14 +156,16 @@ export async function deployCommand() {
   const ownerToken = generateToken();
   const jwtSecret = generateToken();
 
+  const wranglerEnv = accountId ? { env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId } } : undefined;
+
   console.log(`Creating KV namespace ${kvTitle}...`);
-  const kvId = await createKV(kvTitle).catch((err) => {
+  const kvId = await createKV(kvTitle, wranglerEnv).catch((err) => {
     console.error('Failed to create KV namespace:', err.message);
     process.exit(1);
   });
 
   console.log(`Creating D1 database ${dbName}...`);
-  const databaseId = await createD1(dbName).catch((err) => {
+  const databaseId = await createD1(dbName, wranglerEnv).catch((err) => {
     console.error('Failed to create D1 database:', err.message);
     process.exit(1);
   });
@@ -174,7 +180,7 @@ export async function deployCommand() {
     `name = "${workerName}"
 main = "src/index.ts"
 compatibility_date = "2024-05-01"
-
+${accountId ? `account_id = "${accountId}"\n` : ''}
 [[kv_namespaces]]
 binding = "HULL_KV"
 id = "${kvId}"
