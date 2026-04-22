@@ -148,10 +148,10 @@ export async function setupCommand() {
       console.log('✅ Token verified');
     } else {
       console.log('\nOpening browser for Cloudflare login...');
-      console.log('(Scopes: account:read, workers_scripts:write, workers_kv:write, d1:write, zone:read)');
+      console.log('(Scopes: account:read, user:read, workers_scripts:write, workers_kv:write, d1:write, zone:read)');
       console.log('Tip: Use incognito/private mode to switch accounts\n');
       try {
-        await execAsync('wrangler login --scopes account:read workers_scripts:write workers_kv:write d1:write zone:read');
+        await execAsync('wrangler login --scopes account:read user:read workers_scripts:write workers_kv:write d1:write zone:read');
       } catch (err: any) {
         const errMsg = err.stderr || err.message || '';
         if (errMsg.includes('authorization') || errMsg.includes('OAuth')) {
@@ -177,16 +177,36 @@ export async function setupCommand() {
     }
   }
 
-  // Verify auth again
+  // Verify auth again with a real API call
+  console.log('\nVerifying token works with Cloudflare API...');
   try {
-    const { stdout } = await execAsync('wrangler whoami');
-    if (stdout.includes('not authenticated')) {
-      console.error('❌ Still not authenticated.');
+    await execAsync('wrangler kv namespace list');
+    console.log('✅ Token verified');
+  } catch (err: any) {
+    const errMsg = err.stderr || err.message || '';
+    if (errMsg.includes('10000') || errMsg.includes('Authentication')) {
+      console.error('❌ Token authenticated but lacks required permissions.');
+      console.error('This happens with some Cloudflare accounts.');
+      const retry = await prompt('Retry with full Wrangler scopes? (y/n): ');
+      if (retry.toLowerCase() === 'y') {
+        try {
+          await execAsync('wrangler logout');
+        } catch {}
+        try {
+          await execAsync('wrangler login');
+          await execAsync('wrangler kv namespace list');
+          console.log('✅ Token verified');
+        } catch (err2: any) {
+          console.error('Login failed:', err2.stderr || err2.message);
+          process.exit(1);
+        }
+      } else {
+        process.exit(1);
+      }
+    } else {
+      console.error('Auth verification failed:', errMsg);
       process.exit(1);
     }
-  } catch {
-    console.error('❌ Auth check failed.');
-    process.exit(1);
   }
 
   // Check workers.dev subdomain
