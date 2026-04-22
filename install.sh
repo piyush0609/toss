@@ -1,11 +1,11 @@
 #!/bin/sh
 # toss installer — prefers source install (88KB) when Node.js is available.
 # Falls back to 57MB standalone binary only if Node.js is missing.
-# Usage: curl -fsSL https://raw.githubusercontent.com/piyush0609/hull/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/piyush0609/toss/main/install.sh | sh
 
 set -e
 
-REPO="piyush0609/hull"
+REPO="piyush0609/toss"
 VERSION="${VERSION:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 

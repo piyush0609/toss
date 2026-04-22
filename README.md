@@ -10,10 +10,10 @@ toss share ./report.html --expires 24h
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/piyush0609/hull/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/piyush0609/toss/main/install.sh | sh
 ```
 
-The installer detects your OS/arch, downloads the latest binary from [GitHub Releases](https://github.com/piyush0609/hull/releases), and installs it to `/usr/local/bin` (or `~/.local/bin` with PATH auto-configured).
+The installer detects your OS/arch, downloads the latest binary from [GitHub Releases](https://github.com/piyush0609/toss/releases), and installs it to `/usr/local/bin` (or `~/.local/bin` with PATH auto-configured).
 
 **Note:** `npm install -g toss-cli` is not yet available. Use the install script or build from source.
 

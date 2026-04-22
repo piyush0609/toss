@@ -48,7 +48,7 @@ Don't use when:
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/piyush0609/hull/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/piyush0609/toss/main/install.sh | sh
 ```
 
 Or via npm fallback:
@@ -149,5 +149,5 @@ toss share ./coverage-report/index.html --expires 1d --json | jq -r '.url'
 
 ## References
 
-- **Repo:** https://github.com/piyush0609/hull
-- **Releases:** https://github.com/piyush0609/hull/releases
+- **Repo:** https://github.com/piyush0609/toss
+- **Releases:** https://github.com/piyush0609/toss/releases
