@@ -20,6 +20,7 @@ program
 program
   .command('deploy')
   .description('Deploy your toss infrastructure to Cloudflare')
+  .option('-d, --domain <domain>', 'Custom domain (must be on Cloudflare)')
   .action(deployCommand);
 
 program

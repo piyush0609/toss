@@ -117,7 +117,7 @@ async function setSecret(cwd: string, name: string, value: string): Promise<void
   });
 }
 
-export async function deployCommand() {
+export async function deployCommand(options: { domain?: string }) {
   console.log('Setting up your toss on Cloudflare...\n');
 
   // Quick prereq check — direct to setup if anything is missing
@@ -149,6 +149,15 @@ export async function deployCommand() {
     process.exit(1);
   }
 
+  // Validate custom domain if provided
+  const customDomain = options.domain || process.env.TOSS_DOMAIN || undefined;
+  if (customDomain) {
+    if (!/^[a-z0-9][a-z0-9-]*\.[a-z]{2,}(\.[a-z]{2,})?$/i.test(customDomain)) {
+      console.error('Error: Invalid domain format.');
+      process.exit(1);
+    }
+  }
+
   const workerName = `toss-${subdomain}`;
   const dbName = `toss-db-${subdomain}`;
   const kvTitle = `toss-kv-${subdomain}`;
@@ -175,12 +184,16 @@ export async function deployCommand() {
   await mkdir(workerDir, { recursive: true });
   await copyDir(join(__dirname, '..', 'templates', 'worker'), workerDir);
 
+  const routeConfig = customDomain
+    ? `\n[[routes]]\npattern = "${customDomain}"\ncustom_domain = true\n`
+    : '';
+
   await writeFile(
     join(workerDir, 'wrangler.toml'),
     `name = "${workerName}"
 main = "src/index.ts"
 compatibility_date = "2024-05-01"
-${accountId ? `account_id = "${accountId}"\n` : ''}
+${accountId ? `account_id = "${accountId}"\n` : ''}${routeConfig}
 [[kv_namespaces]]
 binding = "TOSS_KV"
 id = "${kvId}"
@@ -222,7 +235,9 @@ database_id = "${databaseId}"
     process.exit(1);
   }
 
-  const workerUrl = `https://${workerName}.${workersDevSubdomain}.workers.dev`;
+  const workerUrl = customDomain
+    ? `https://${customDomain}`
+    : `https://${workerName}.${workersDevSubdomain}.workers.dev`;
 
   console.log('Setting secrets...');
   try {

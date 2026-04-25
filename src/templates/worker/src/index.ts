@@ -7,9 +7,19 @@ export interface Env {
   OWNER_TOKEN: string;
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 function requireOwner(request: Request, env: Env): Response | null {
-  const auth = request.headers.get('Authorization');
-  if (auth !== `Bearer ${env.OWNER_TOKEN}`) {
+  const auth = request.headers.get('Authorization') || '';
+  const expected = `Bearer ${env.OWNER_TOKEN}`;
+  if (!constantTimeEqual(auth, expected)) {
     return new Response('Unauthorized', { status: 401 });
   }
   return null;
@@ -63,6 +73,12 @@ export default {
         const authErr = requireOwner(request, env);
         if (authErr) return authErr;
 
+        const contentLength = request.headers.get('Content-Length');
+        const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
+        if (contentLength && parseInt(contentLength, 10) > MAX_UPLOAD_SIZE) {
+          return new Response('Request too large', { status: 413 });
+        }
+
         const name = url.searchParams.get('name') || 'untitled.html';
         const expiresParam = url.searchParams.get('expires');
         if (!expiresParam) return new Response('Missing expires param', { status: 400 });
@@ -100,6 +116,12 @@ export default {
       if (filesMatch && request.method === 'POST') {
         const authErr = requireOwner(request, env);
         if (authErr) return authErr;
+
+        const contentLength = request.headers.get('Content-Length');
+        const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
+        if (contentLength && parseInt(contentLength, 10) > MAX_UPLOAD_SIZE) {
+          return new Response('Request too large', { status: 413 });
+        }
 
         const id = filesMatch[1];
         let filePath = url.searchParams.get('path');
@@ -191,6 +213,14 @@ export default {
         let filePath = serveMatch[2] || 'index.html';
         if (filePath.endsWith('/')) filePath += 'index.html';
 
+        // Normalize and reject path traversal
+        filePath = filePath.replace(/\\/g, '/');
+        const parts = filePath.split('/').filter((p) => p !== '' && p !== '.');
+        if (parts.some((p) => p === '..')) {
+          return new Response('Invalid path', { status: 400 });
+        }
+        filePath = parts.join('/');
+
         const obj = await env.TOSS_KV.get(`artifacts/${id}/files/${filePath}`, 'arrayBuffer');
         if (!obj) {
           if (!filePath.endsWith('.html')) {
@@ -227,7 +257,9 @@ export default {
 
       return new Response('Not found', { status: 404 });
     } catch (err) {
-      return new Response(`Error: ${err instanceof Error ? err.message : String(err)}`, { status: 500 });
+      // Log internally but return generic error to avoid leaking details
+      console.error('Worker error:', err);
+      return new Response('Internal server error', { status: 500 });
     }
   },
 };

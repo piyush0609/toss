@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, chmod } from 'fs/promises';
 import { join } from 'path';
 
 function configFile(): string {
@@ -27,4 +27,5 @@ export async function saveConfig(config: TossConfig): Promise<void> {
   const dir = file.slice(0, file.lastIndexOf('/'));
   await mkdir(dir, { recursive: true });
   await writeFile(file, JSON.stringify(config, null, 2));
+  await chmod(file, 0o600);
 }

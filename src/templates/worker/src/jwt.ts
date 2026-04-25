@@ -3,7 +3,8 @@ function b64urlEncode(str: string): string {
 }
 
 function b64urlDecode(str: string): string {
-  str += new Array(5 - (str.length % 4)).join('=');
+  const padLen = (4 - (str.length % 4)) % 4;
+  str += new Array(padLen + 1).join('=');
   return atob(str.replace(/\-/g, '+').replace(/\_/g, '/'));
 }
 
