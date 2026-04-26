@@ -5,7 +5,10 @@ export interface Env {
   TOSS_DB: D1Database;
   JWT_SECRET: string;
   OWNER_TOKEN: string;
+  MULTI_TENANT?: string;
 }
+
+// --- Crypto helpers ---
 
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -16,14 +19,59 @@ function constantTimeEqual(a: string, b: string): boolean {
   return result === 0;
 }
 
-function requireOwner(request: Request, env: Env): Response | null {
+async function sha256(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(text));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// --- Auth ---
+
+interface AuthUser {
+  tokenHash: string;
+  isAdmin: boolean;
+}
+
+async function resolveUser(request: Request, env: Env): Promise<AuthUser | null> {
   const auth = request.headers.get('Authorization') || '';
-  const expected = `Bearer ${env.OWNER_TOKEN}`;
-  if (!constantTimeEqual(auth, expected)) {
-    return new Response('Unauthorized', { status: 401 });
+  if (!auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+  const tokenHash = await sha256(token);
+
+  // Always check admin token first
+  const adminHash = await sha256(env.OWNER_TOKEN);
+  if (constantTimeEqual(tokenHash, adminHash)) {
+    return { tokenHash, isAdmin: true };
   }
+
+  // Multi-tenant mode: check registered users table
+  if (env.MULTI_TENANT === 'true') {
+    const row = await env.TOSS_DB.prepare('SELECT is_admin FROM users WHERE token_hash = ?')
+      .bind(tokenHash)
+      .first<{ is_admin: number }>();
+    if (row) {
+      return { tokenHash, isAdmin: row.is_admin === 1 };
+    }
+  }
+
   return null;
 }
+
+function requireUser(request: Request, env: Env): Promise<AuthUser | Response> {
+  return resolveUser(request, env).then((u) => u ?? new Response('Unauthorized', { status: 401 }));
+}
+
+function requireAdmin(request: Request, env: Env): Promise<AuthUser | Response> {
+  return resolveUser(request, env).then((u) => {
+    if (!u) return new Response('Unauthorized', { status: 401 });
+    if (!u.isAdmin) return new Response('Forbidden', { status: 403 });
+    return u;
+  });
+}
+
+// --- ID / Slug generation ---
 
 function generateId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -32,6 +80,19 @@ function generateId(): string {
     .join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+function generateSlug(name: string): string {
+  const base = name
+    .replace(/\.html?$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 30);
+  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${base || 'share'}-${suffix}`;
+}
+
+// --- MIME ---
 
 function mimeType(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() || '';
@@ -63,15 +124,78 @@ function mimeType(path: string): string {
   return map[ext] || 'application/octet-stream';
 }
 
+// --- Serve artifact (shared by /a/:id and /s/:slug) ---
+
+interface ArtifactMeta {
+  id: string;
+  expires_at: number;
+}
+
+async function serveArtifact(
+  meta: ArtifactMeta,
+  filePath: string,
+  request: Request,
+  env: Env
+): Promise<Response> {
+  // Check expiry
+  if (meta.expires_at < Math.floor(Date.now() / 1000)) {
+    return new Response('Link expired', { status: 410 });
+  }
+
+  const obj = await env.TOSS_KV.get(`artifacts/${meta.id}/files/${filePath}`, 'arrayBuffer');
+  if (!obj) {
+    if (!filePath.endsWith('.html')) {
+      const indexObj = await env.TOSS_KV.get(`artifacts/${meta.id}/files/${filePath}/index.html`, 'arrayBuffer');
+      if (indexObj) {
+        return new Response(indexObj, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html', 'X-Content-Type-Options': 'nosniff' },
+        });
+      }
+    }
+    return new Response('Not found', { status: 404 });
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': mimeType(filePath),
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+  };
+
+  if (filePath.endsWith('.html')) {
+    const maxAge = Math.max(0, meta.expires_at - Math.floor(Date.now() / 1000));
+    headers['Set-Cookie'] = `toss_tok=${meta.id}; Path=/a/${meta.id}; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+    headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' https:; frame-ancestors 'none'; base-uri 'none';";
+    headers['Cache-Control'] = 'private, no-store, max-age=0';
+  } else {
+    headers['Cache-Control'] = 'public, max-age=86400, immutable';
+  }
+
+  return new Response(obj, { status: 200, headers });
+}
+
+// --- Main handler ---
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     try {
-      // Upload artifact (creates ID + stores main file)
+      // Seed admin user in multi-tenant mode if table is empty
+      if (env.MULTI_TENANT === 'true') {
+        const count = await env.TOSS_DB.prepare('SELECT COUNT(*) as c FROM users').first<{ c: number }>();
+        if (count && count.c === 0) {
+          const adminHash = await sha256(env.OWNER_TOKEN);
+          await env.TOSS_DB.prepare(
+            'INSERT INTO users (token_hash, label, created_at, is_admin) VALUES (?, ?, ?, ?)'
+          ).bind(adminHash, 'admin', Math.floor(Date.now() / 1000), 1).run();
+        }
+      }
+
+      // ===== UPLOAD artifact =====
       if (url.pathname === '/artifacts' && request.method === 'POST') {
-        const authErr = requireOwner(request, env);
-        if (authErr) return authErr;
+        const auth = await requireUser(request, env);
+        if (auth instanceof Response) return auth;
 
         const contentLength = request.headers.get('Content-Length');
         const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
@@ -93,29 +217,32 @@ export default {
         }
 
         const id = generateId();
+        const slug = generateSlug(name);
         const html = await request.text();
 
         await env.TOSS_KV.put(`artifacts/${id}/files/index.html`, html);
 
         const now = Math.floor(Date.now() / 1000);
         await env.TOSS_DB.prepare(
-          'INSERT INTO artifacts (id, name, size_bytes, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
+          'INSERT INTO artifacts (id, slug, name, size_bytes, created_at, expires_at, token_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
         )
-          .bind(id, name, html.length, now, now + expiresSeconds)
+          .bind(id, slug, name, html.length, now, now + expiresSeconds, auth.tokenHash)
           .run();
 
         const jwt = await signJWT({ sub: id, iat: now, exp: now + expiresSeconds }, env.JWT_SECRET);
-        const shareUrl = `${url.origin}/a/${id}?t=${jwt}`;
-        return new Response(JSON.stringify({ id, url: shareUrl }), {
+        const legacyUrl = `${url.origin}/a/${id}?t=${jwt}`;
+        const shortUrl = `${url.origin}/s/${slug}`;
+
+        return new Response(JSON.stringify({ id, slug, url: shortUrl, legacyUrl }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
 
-      // Upload additional files to an existing artifact
+      // ===== UPLOAD additional files =====
       const filesMatch = url.pathname.match(/^\/artifacts\/([a-f0-9-]+)\/files$/);
       if (filesMatch && request.method === 'POST') {
-        const authErr = requireOwner(request, env);
-        if (authErr) return authErr;
+        const auth = await requireUser(request, env);
+        if (auth instanceof Response) return auth;
 
         const contentLength = request.headers.get('Content-Length');
         const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
@@ -124,10 +251,20 @@ export default {
         }
 
         const id = filesMatch[1];
+
+        // In multi-tenant mode, verify user owns this artifact
+        if (env.MULTI_TENANT === 'true' && !auth.isAdmin) {
+          const row = await env.TOSS_DB.prepare('SELECT token_hash FROM artifacts WHERE id = ?')
+            .bind(id)
+            .first<{ token_hash: string }>();
+          if (!row || !constantTimeEqual(row.token_hash, auth.tokenHash)) {
+            return new Response('Forbidden', { status: 403 });
+          }
+        }
+
         let filePath = url.searchParams.get('path');
         if (!filePath) return new Response('Missing path param', { status: 400 });
 
-        // Normalize and reject path traversal
         filePath = filePath.replace(/\\/g, '/');
         const parts = filePath.split('/').filter((p) => p !== '' && p !== '.');
         if (parts.some((p) => p === '..')) {
@@ -143,26 +280,46 @@ export default {
         });
       }
 
-      // List
+      // ===== LIST artifacts =====
       if (url.pathname === '/artifacts' && request.method === 'GET') {
-        const authErr = requireOwner(request, env);
-        if (authErr) return authErr;
+        const auth = await requireUser(request, env);
+        if (auth instanceof Response) return auth;
 
-        const { results } = await env.TOSS_DB.prepare(
-          'SELECT id, name, size_bytes, created_at, expires_at FROM artifacts ORDER BY created_at DESC'
-        ).all();
+        let results: unknown[] = [];
+        if (env.MULTI_TENANT === 'true' && !auth.isAdmin) {
+          const q = await env.TOSS_DB.prepare(
+            'SELECT id, slug, name, size_bytes, created_at, expires_at FROM artifacts WHERE token_hash = ? ORDER BY created_at DESC'
+          ).bind(auth.tokenHash).all();
+          results = q.results || [];
+        } else {
+          const q = await env.TOSS_DB.prepare(
+            'SELECT id, slug, name, size_bytes, created_at, expires_at FROM artifacts ORDER BY created_at DESC'
+          ).all();
+          results = q.results || [];
+        }
 
-        return new Response(JSON.stringify(results || []), {
+        return new Response(JSON.stringify(results), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
 
-      // Delete / Revoke
+      // ===== DELETE artifact =====
       if (url.pathname.match(/^\/artifacts\/[a-f0-9-]+$/) && request.method === 'DELETE') {
-        const authErr = requireOwner(request, env);
-        if (authErr) return authErr;
+        const auth = await requireUser(request, env);
+        if (auth instanceof Response) return auth;
 
         const id = url.pathname.split('/')[2];
+
+        // In multi-tenant mode, verify ownership
+        if (env.MULTI_TENANT === 'true' && !auth.isAdmin) {
+          const row = await env.TOSS_DB.prepare('SELECT token_hash FROM artifacts WHERE id = ?')
+            .bind(id)
+            .first<{ token_hash: string }>();
+          if (!row || !constantTimeEqual(row.token_hash, auth.tokenHash)) {
+            return new Response('Forbidden', { status: 403 });
+          }
+        }
+
         let cursor: string | undefined;
         do {
           const list = await env.TOSS_KV.list({ prefix: `artifacts/${id}/`, cursor });
@@ -178,17 +335,88 @@ export default {
         });
       }
 
-      // Serve artifact files
+      // ===== TOKEN MANAGEMENT (admin only) =====
+      if (env.MULTI_TENANT === 'true' && url.pathname === '/tokens') {
+        if (request.method === 'GET') {
+          const auth = await requireAdmin(request, env);
+          if (auth instanceof Response) return auth;
+
+          const { results } = await env.TOSS_DB.prepare(
+            'SELECT token_hash, label, created_at, is_admin FROM users ORDER BY created_at DESC'
+          ).all();
+          return new Response(JSON.stringify(results || []), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (request.method === 'POST') {
+          const auth = await requireAdmin(request, env);
+          if (auth instanceof Response) return auth;
+
+          const body = await request.json() as { label?: string };
+          const label = body.label || 'unnamed';
+          const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+          const token = Array.from(tokenBytes)
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
+          const tokenHash = await sha256(token);
+
+          await env.TOSS_DB.prepare(
+            'INSERT INTO users (token_hash, label, created_at, is_admin) VALUES (?, ?, ?, ?)'
+          ).bind(tokenHash, label, Math.floor(Date.now() / 1000), 0).run();
+
+          return new Response(JSON.stringify({ token, label }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      if (env.MULTI_TENANT === 'true' && url.pathname.match(/^\/tokens\/[a-f0-9]{64}$/) && request.method === 'DELETE') {
+        const auth = await requireAdmin(request, env);
+        if (auth instanceof Response) return auth;
+
+        const tokenHash = url.pathname.split('/')[2];
+        await env.TOSS_DB.prepare('DELETE FROM users WHERE token_hash = ? AND is_admin = 0')
+          .bind(tokenHash)
+          .run();
+
+        return new Response(JSON.stringify({ revoked: tokenHash }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // ===== SERVE by slug (/s/:slug) =====
+      const slugMatch = url.pathname.match(/^\/s\/([a-z0-9-]+)(?:\/(.*))?$/);
+      if (slugMatch) {
+        const slug = slugMatch[1];
+        const row = await env.TOSS_DB.prepare(
+          'SELECT id, expires_at FROM artifacts WHERE slug = ?'
+        ).bind(slug).first<{ id: string; expires_at: number }>();
+
+        if (!row) return new Response('Not found', { status: 404 });
+
+        let filePath = slugMatch[2] || 'index.html';
+        if (filePath.endsWith('/')) filePath += 'index.html';
+
+        filePath = filePath.replace(/\\/g, '/');
+        const parts = filePath.split('/').filter((p) => p !== '' && p !== '.');
+        if (parts.some((p) => p === '..')) {
+          return new Response('Invalid path', { status: 400 });
+        }
+        filePath = parts.join('/');
+
+        return serveArtifact(row, filePath, request, env);
+      }
+
+      // ===== SERVE by ID + JWT (/a/:id) =====
       const serveMatch = url.pathname.match(/^\/a\/([a-f0-9-]+)(?:\/(.*))?$/);
       if (serveMatch) {
         const id = serveMatch[1];
 
-        // Redirect /a/{id} → /a/{id}/ so relative URLs resolve correctly
         if (!url.pathname.endsWith('/') && serveMatch[2] === undefined) {
           return Response.redirect(`${url.origin}${url.pathname}/?${url.searchParams.toString()}`, 302);
         }
 
-        // Validate auth: query token OR cookie
         let token = url.searchParams.get('t');
         if (!token) {
           const cookie = request.headers.get('Cookie');
@@ -213,7 +441,6 @@ export default {
         let filePath = serveMatch[2] || 'index.html';
         if (filePath.endsWith('/')) filePath += 'index.html';
 
-        // Normalize and reject path traversal
         filePath = filePath.replace(/\\/g, '/');
         const parts = filePath.split('/').filter((p) => p !== '' && p !== '.');
         if (parts.some((p) => p === '..')) {
@@ -221,43 +448,12 @@ export default {
         }
         filePath = parts.join('/');
 
-        const obj = await env.TOSS_KV.get(`artifacts/${id}/files/${filePath}`, 'arrayBuffer');
-        if (!obj) {
-          if (!filePath.endsWith('.html')) {
-            const indexObj = await env.TOSS_KV.get(`artifacts/${id}/files/${filePath}/index.html`, 'arrayBuffer');
-            if (indexObj) {
-              return new Response(indexObj, {
-                status: 200,
-                headers: { 'Content-Type': 'text/html', 'X-Content-Type-Options': 'nosniff' },
-              });
-            }
-          }
-          return new Response('Not found', { status: 404 });
-        }
-
-        const headers: Record<string, string> = {
-          'Content-Type': mimeType(filePath),
-          'X-Content-Type-Options': 'nosniff',
-          'Referrer-Policy': 'no-referrer',
-        };
-
-        if (filePath.endsWith('.html')) {
-          const maxAge = Math.max(0, (payload.exp as number) - Math.floor(Date.now() / 1000));
-          headers['Set-Cookie'] = `toss_tok=${token}; Path=/a/${id}; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
-          headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' https:; frame-ancestors 'none'; base-uri 'none';";
-          // Auth-gated HTML: never cache
-          headers['Cache-Control'] = 'private, no-store, max-age=0';
-        } else {
-          // Static assets: cache at edge for 1 day since they're immutable per artifact
-          headers['Cache-Control'] = 'public, max-age=86400, immutable';
-        }
-
-        return new Response(obj, { status: 200, headers });
+        const meta = { id, expires_at: payload.exp as number };
+        return serveArtifact(meta, filePath, request, env);
       }
 
       return new Response('Not found', { status: 404 });
     } catch (err) {
-      // Log internally but return generic error to avoid leaking details
       console.error('Worker error:', err);
       return new Response('Internal server error', { status: 500 });
     }

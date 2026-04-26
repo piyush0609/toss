@@ -36,12 +36,13 @@ export async function listCommand() {
     return;
   }
 
-  console.log('ID        NAME              SIZE     EXPIRES');
+  console.log('ID        SLUG                 NAME              SIZE     EXPIRES');
   for (const a of artifacts) {
     const id = a.id.slice(0, 8).padEnd(9);
+    const slug = (a.slug || '-').slice(0, 20).padEnd(20);
     const name = a.name.slice(0, 17).padEnd(17);
     const size = fmtSize(Number(a.size_bytes)).padStart(7).padEnd(8);
     const expiry = fmtExpiry(Number(a.expires_at) * 1000 - Date.now());
-    console.log(`${id} ${name} ${size} ${expiry}`);
+    console.log(`${id} ${slug} ${name} ${size} ${expiry}`);
   }
 }

@@ -76,7 +76,7 @@ export async function shareCommand(file: string, options: { expires: string; cli
   const api = new TossAPI(config);
   const expires = parseDuration(options.expires);
 
-  let result: { id: string; url: string };
+  let result: { id: string; slug: string; url: string; legacyUrl: string };
 
   const fileStat = await stat(file).catch(() => null);
   if (!fileStat) {
@@ -162,8 +162,9 @@ export async function shareCommand(file: string, options: { expires: string; cli
     console.log(JSON.stringify(result));
   } else {
     console.log(`\nLink:     ${result.url}`);
+    if (result.legacyUrl) console.log(`Legacy:   ${result.legacyUrl}`);
     console.log(`Expires:  ${options.expires}`);
     if (options.clipboard) console.log('Copied to clipboard.');
-    console.log(`Revoke:   toss revoke ${result.id}\n`);
+    console.log(`Revoke:   toss revoke ${result.slug || result.id}\n`);
   }
 }

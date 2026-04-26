@@ -11,7 +11,7 @@ async function safeFetch(url: string, init: RequestInit): Promise<Response> {
 export class TossAPI {
   constructor(private config: TossConfig) {}
 
-  async upload(html: Buffer, name: string, expiresSeconds: number): Promise<{ id: string; url: string }> {
+  async upload(html: Buffer, name: string, expiresSeconds: number): Promise<{ id: string; slug: string; url: string; legacyUrl: string }> {
     const url = new URL('/artifacts', this.config.endpoint);
     url.searchParams.set('expires', String(expiresSeconds));
     url.searchParams.set('name', name);
@@ -51,7 +51,7 @@ export class TossAPI {
     }
   }
 
-  async list(): Promise<Array<{ id: string; name: string; size_bytes: number; created_at: number; expires_at: number }>> {
+  async list(): Promise<Array<{ id: string; slug?: string; name: string; size_bytes: number; created_at: number; expires_at: number }>> {
     const res = await safeFetch(`${this.config.endpoint}/artifacts`, {
       headers: { Authorization: `Bearer ${this.config.ownerToken}` },
     });

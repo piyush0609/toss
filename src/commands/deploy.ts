@@ -117,7 +117,7 @@ async function setSecret(cwd: string, name: string, value: string): Promise<void
   });
 }
 
-export async function deployCommand(options: { domain?: string }) {
+export async function deployCommand(options: { domain?: string; multiTenant?: boolean }) {
   console.log('Setting up your toss on Cloudflare...\n');
 
   // Quick prereq check — direct to setup if anything is missing
@@ -188,12 +188,16 @@ export async function deployCommand(options: { domain?: string }) {
     ? `\n[[routes]]\npattern = "${customDomain}"\ncustom_domain = true\n`
     : '';
 
+  const multiTenantConfig = options.multiTenant
+    ? `\n[vars]\nMULTI_TENANT = "true"\n`
+    : '';
+
   await writeFile(
     join(workerDir, 'wrangler.toml'),
     `name = "${workerName}"
 main = "src/index.ts"
 compatibility_date = "2024-05-01"
-${accountId ? `account_id = "${accountId}"\n` : ''}${routeConfig}
+${accountId ? `account_id = "${accountId}"\n` : ''}${routeConfig}${multiTenantConfig}
 [[kv_namespaces]]
 binding = "TOSS_KV"
 id = "${kvId}"
@@ -260,6 +264,10 @@ database_id = "${databaseId}"
 
   console.log('\n✅ Your toss is ready.');
   console.log(`   Endpoint: ${workerUrl}`);
+  if (options.multiTenant) {
+    console.log(`   Mode:     Multi-tenant team service`);
+    console.log(`   Admin:    toss token create --label "teammate"`);
+  }
   console.log(`   Upload:   toss share ./file.html --expires 24h`);
   console.log(`   Manage:   toss list`);
 }

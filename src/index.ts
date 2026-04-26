@@ -9,6 +9,8 @@ import { doctorCommand } from './commands/doctor.js';
 import { infoCommand } from './commands/info.js';
 import { setupCommand } from './commands/setup.js';
 import { skillInstallCommand, skillUninstallCommand, skillListCommand, skillUpdateCommand } from './commands/skill.js';
+import { tokenCreateCommand, tokenListCommand, tokenRevokeCommand, tokenRotateCommand } from './commands/token.js';
+import { joinCommand } from './commands/join.js';
 
 const program = new Command();
 
@@ -21,6 +23,7 @@ program
   .command('deploy')
   .description('Deploy your toss infrastructure to Cloudflare')
   .option('-d, --domain <domain>', 'Custom domain (must be on Cloudflare)')
+  .option('--multi-tenant', 'Enable multi-user team mode')
   .action(deployCommand);
 
 program
@@ -87,5 +90,36 @@ skill
   .command('update [tool]')
   .description('Update outdated skills (or all if no tool specified)')
   .action(skillUpdateCommand);
+
+const token = program
+  .command('token')
+  .description('Manage upload tokens (admin only)');
+
+token
+  .command('create')
+  .description('Create a new user token')
+  .requiredOption('-l, --label <label>', 'Name for the token (e.g. teammate name)')
+  .action(tokenCreateCommand);
+
+token
+  .command('list')
+  .description('List all authorized tokens')
+  .action(tokenListCommand);
+
+token
+  .command('revoke <hash>')
+  .description('Revoke a user token by hash prefix')
+  .action(tokenRevokeCommand);
+
+token
+  .command('rotate')
+  .description('Regenerate admin token (invalidates old one)')
+  .action(tokenRotateCommand);
+
+program
+  .command('join <endpoint>')
+  .description('Join a shared toss instance (one-line setup)')
+  .requiredOption('-t, --token <token>', 'Your upload token')
+  .action(joinCommand);
 
 program.parse();

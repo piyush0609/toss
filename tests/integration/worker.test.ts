@@ -62,7 +62,9 @@ describe('Worker Routes', () => {
 
       const body = await res.json();
       expect(body.id).toBeDefined();
-      expect(body.url).toMatch(/^http:\/\/localhost\/a\/[a-f0-9-]+\?t=eyJ/);
+      expect(body.url).toMatch(/^http:\/\/localhost\/s\/[a-z0-9-]+/);
+      expect(body.legacyUrl).toMatch(/^http:\/\/localhost\/a\/[a-f0-9-]+\?t=eyJ/);
+      expect(body.slug).toBeDefined();
 
       const stored = await kv.get(`artifacts/${body.id}/files/index.html`);
       expect(stored).toBe('<html>test</html>');
