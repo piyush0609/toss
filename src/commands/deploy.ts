@@ -5,7 +5,7 @@ import { dirname } from 'path';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
-import { saveConfig, listProfiles, switchProfile } from '../lib/config.js';
+import { saveConfig, loadConfig, listProfiles, switchProfile } from '../lib/config.js';
 import { prompt, promptConfirm, promptSelect } from '../lib/prompt.js';
 
 const execAsync = promisify(exec);
@@ -166,7 +166,6 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
   // Load profile if specified
   let profileConfig = null;
   if (profileName) {
-    const { loadConfig } = await import('../lib/config.js');
     profileConfig = await loadConfig(profileName);
   }
 
@@ -220,6 +219,13 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
     console.error('Error: Subdomain must be lowercase alphanumeric with hyphens only.');
     process.exit(1);
   }
+
+  // Save subdomain early so destroy can find resources if deploy fails later
+  const earlyConfig = await loadConfig(profileName) || { endpoint: '', ownerToken: '', subdomain };
+  earlyConfig.subdomain = subdomain;
+  if (accountId) earlyConfig.accountId = accountId;
+  if (apiToken) earlyConfig.apiToken = apiToken;
+  await saveConfig(earlyConfig, profileName);
 
   // Validate custom domain if provided
   const customDomain = options.domain || process.env.TOSS_DOMAIN || undefined;

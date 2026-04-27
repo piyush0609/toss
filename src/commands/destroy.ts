@@ -13,10 +13,17 @@ export async function destroyCommand(options: { profile?: string } = {}) {
     process.exit(1);
   }
 
-  console.log(`Destroying toss (${config.subdomain})...\n`);
+  const subdomain = config.subdomain;
+  if (!subdomain) {
+    console.warn('⚠️  Warning: No subdomain found in profile config.');
+    console.warn('   The deploy may have failed before saving the config.');
+    console.warn('   You may need to clean up resources manually in the Cloudflare dashboard.\n');
+  }
+
+  console.log(`Destroying toss (${subdomain || 'unknown'})...\n`);
 
   const workerDir = join(process.env.HOME || '.', '.toss', 'worker');
-  const dbName = `toss-db-${config.subdomain}`;
+  const dbName = subdomain ? `toss-db-${subdomain}` : '';
 
   // Build env with profile API token if available
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -32,11 +39,15 @@ export async function destroyCommand(options: { profile?: string } = {}) {
   }
 
   // Delete D1 database
-  try {
-    await execAsync(`wrangler d1 delete ${dbName} -y`, { cwd: workerDir, env });
-    console.log('✓ Database deleted');
-  } catch (err: any) {
-    console.error('✗ Database deletion failed:', err.stderr?.trim() || err.message);
+  if (dbName) {
+    try {
+      await execAsync(`wrangler d1 delete ${dbName} -y`, { cwd: workerDir, env });
+      console.log('✓ Database deleted');
+    } catch (err: any) {
+      console.error('✗ Database deletion failed:', err.stderr?.trim() || err.message);
+    }
+  } else {
+    console.log('⊘ Skipping database deletion (no subdomain in config)');
   }
 
   // Delete KV namespace
