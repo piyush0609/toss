@@ -60,8 +60,9 @@ function getEmailFromWhoami(stdout: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-export async function setupCommand(options: { profile?: string } = {}) {
+export async function setupCommand(options: { profile?: string; subdomain?: string } = {}) {
   const profileName = options.profile;
+  const presetSubdomain = options.subdomain;
 
   if (profileName) {
     console.log(`Toss Setup — Profile: ${profileName}\n==========\n`);
@@ -76,6 +77,12 @@ export async function setupCommand(options: { profile?: string } = {}) {
     }
   } else {
     console.log('Toss Setup\n==========\n');
+  }
+
+  // Validate subdomain if provided
+  if (presetSubdomain && !/^[a-z0-9-]+$/.test(presetSubdomain)) {
+    console.error('Error: Subdomain must be lowercase alphanumeric with hyphens only.');
+    process.exit(1);
   }
 
   // Check Node.js
@@ -288,17 +295,21 @@ export async function setupCommand(options: { profile?: string } = {}) {
     // Update auth fields
     if (apiToken) config.apiToken = apiToken;
     if (accountId) config.accountId = accountId;
+    if (presetSubdomain) config.subdomain = presetSubdomain;
 
     await saveConfig(config, profileName);
     await switchProfile(profileName);
 
-    console.log(`\n✅ Profile "${profileName}" configured with Cloudflare auth.`);
+    console.log(`\n✅ Profile "${profileName}" configured.`);
     if (apiToken) {
       console.log(`   Auth: API token (multi-account ready)`);
     } else {
       console.log(`   Auth: OAuth (global — use API token for multi-account)`);
     }
     console.log(`   Account: ${accountId}`);
+    if (presetSubdomain) {
+      console.log(`   Subdomain: ${presetSubdomain}`);
+    }
     console.log(`\n   Next: toss deploy --profile ${profileName}`);
   } else {
     console.log('\n✅ Setup complete. You can now run:');

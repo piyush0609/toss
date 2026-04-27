@@ -214,7 +214,13 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
     }
   }
 
-  const subdomain = process.env.TOSS_SUBDOMAIN || await prompt('Choose a subdomain (e.g., yourname): ');
+  // If profile already has a subdomain from setup, use it
+  const profileSubdomain = profileConfig?.subdomain;
+  if (profileSubdomain && !process.env.TOSS_SUBDOMAIN) {
+    console.log(`Using profile subdomain: ${profileSubdomain}`);
+  }
+
+  const subdomain = process.env.TOSS_SUBDOMAIN || profileSubdomain || await prompt('Choose a subdomain (e.g., yourname): ');
   if (!subdomain || !/^[a-z0-9-]+$/.test(subdomain)) {
     console.error('Error: Subdomain must be lowercase alphanumeric with hyphens only.');
     process.exit(1);

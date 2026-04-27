@@ -60,6 +60,7 @@ program
   .command('setup')
   .description('One-time setup: install wrangler, login, check subdomain')
   .option('--profile <name>', 'Configure auth for a specific profile')
+  .option('--subdomain <name>', 'Set the default subdomain for this profile')
   .action(setupCommand);
 
 program
