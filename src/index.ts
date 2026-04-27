@@ -59,6 +59,7 @@ program
 program
   .command('setup')
   .description('One-time setup: install wrangler, login, check subdomain')
+  .option('--profile <name>', 'Configure auth for a specific profile')
   .action(setupCommand);
 
 program

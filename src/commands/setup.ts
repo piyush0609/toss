@@ -4,6 +4,7 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { prompt, promptConfirm } from '../lib/prompt.js';
+import { loadConfig, saveConfig, switchProfile } from '../lib/config.js';
 
 const execAsync = promisify(exec);
 
@@ -36,6 +37,19 @@ async function getWorkersDevSubdomain(accountId: string, token: string): Promise
   return null;
 }
 
+async function getAccountIdFromToken(token: string): Promise<string | null> {
+  try {
+    const res = await fetch('https://api.cloudflare.com/client/v4/accounts', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json() as { success: boolean; result?: Array<{ id: string }> };
+    if (data.success && data.result && data.result.length > 0) {
+      return data.result[0].id;
+    }
+  } catch {}
+  return null;
+}
+
 function getAccountIdFromWhoami(stdout: string): string | null {
   const match = stdout.match(/([a-f0-9]{32})/);
   return match ? match[1] : null;
@@ -46,8 +60,23 @@ function getEmailFromWhoami(stdout: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-export async function setupCommand() {
-  console.log('Toss Setup\n==========\n');
+export async function setupCommand(options: { profile?: string } = {}) {
+  const profileName = options.profile;
+
+  if (profileName) {
+    console.log(`Toss Setup — Profile: ${profileName}\n==========\n`);
+    const existing = await loadConfig(profileName);
+    if (existing) {
+      console.log(`Profile "${profileName}" already exists with endpoint: ${existing.endpoint}`);
+      const reauth = await promptConfirm('Re-configure auth for this profile?', true);
+      if (!reauth) {
+        console.log('Setup cancelled. Profile auth unchanged.');
+        return;
+      }
+    }
+  } else {
+    console.log('Toss Setup\n==========\n');
+  }
 
   // Check Node.js
   const nodeVersion = process.version;
@@ -95,23 +124,38 @@ export async function setupCommand() {
     }
   } catch {}
 
+  let apiToken = '';
+  let accountId = '';
+
   if (authOk) {
     const email = getEmailFromWhoami(whoamiStdout) || 'Cloudflare account';
     console.log(`✅ Authenticated as ${email}`);
-    const answer = await prompt('Use this account? (y/n): ');
-    if (answer.toLowerCase() !== 'y') {
-      console.log('Signing out...');
-      try {
-        await execAsync('wrangler logout');
-      } catch {}
-      authOk = false;
+
+    if (profileName) {
+      // For profile setup, always ask to confirm or re-auth
+      // so we can capture the auth details for this profile
+      const useCurrent = await promptConfirm('Use this account for the profile?', true);
+      if (useCurrent) {
+        accountId = getAccountIdFromWhoami(whoamiStdout) || '';
+      } else {
+        authOk = false;
+      }
+    } else {
+      const answer = await prompt('Use this account? (y/n): ');
+      if (answer.toLowerCase() !== 'y') {
+        console.log('Signing out...');
+        try {
+          await execAsync('wrangler logout');
+        } catch {}
+        authOk = false;
+      }
     }
   }
 
   if (!authOk) {
     console.log('\nChoose login method:');
     console.log('  1. Browser login (opens Cloudflare OAuth)');
-    console.log('  2. API token (paste a token, no browser)');
+    console.log('  2. API token (paste a token, no browser) — best for multi-account');
     const method = await prompt('Option (1/2): ');
 
     if (method === '2') {
@@ -133,9 +177,12 @@ export async function setupCommand() {
         console.error('Token verification failed. Check your token.');
         process.exit(1);
       }
-      // Set token for wrangler to use
-      process.env.CLOUDFLARE_API_TOKEN = token;
+      apiToken = token;
+      accountId = (await getAccountIdFromToken(token)) || '';
       console.log('✅ Token verified');
+      if (accountId) {
+        console.log(`   Account ID: ${accountId}`);
+      }
     } else {
       console.log('\nOpening browser for Cloudflare login...');
       console.log('(Scopes: account:read, user:read, workers_scripts:write, workers_kv:write, d1:write, zone:read)');
@@ -167,13 +214,21 @@ export async function setupCommand() {
     }
   }
 
+  // If OAuth was used (no API token), extract account ID from whoami
+  if (!apiToken && !accountId) {
+    try {
+      const { stdout } = await execAsync('wrangler whoami');
+      accountId = getAccountIdFromWhoami(stdout) || '';
+    } catch {}
+  }
+
   // Verify auth again with a real API call
   console.log('\nVerifying token works with Cloudflare API...');
   try {
     const { stdout } = await execAsync('wrangler whoami');
-    const accountId = getAccountIdFromWhoami(stdout);
-    const verifyCmd = accountId
-      ? `CLOUDFLARE_ACCOUNT_ID=${accountId} wrangler kv namespace list`
+    const whoamiAccountId = getAccountIdFromWhoami(stdout);
+    const verifyCmd = whoamiAccountId
+      ? `CLOUDFLARE_ACCOUNT_ID=${whoamiAccountId} wrangler kv namespace list`
       : 'wrangler kv namespace list';
     await execAsync(verifyCmd);
     console.log('✅ Token verified');
@@ -209,10 +264,10 @@ export async function setupCommand() {
   let subdomain = '';
   try {
     const { stdout } = await execAsync('wrangler whoami');
-    const accountId = getAccountIdFromWhoami(stdout);
-    const token = await getWranglerToken();
-    if (accountId && token) {
-      subdomain = (await getWorkersDevSubdomain(accountId, token)) || '';
+    const whoamiAccountId = getAccountIdFromWhoami(stdout);
+    const token = apiToken || await getWranglerToken();
+    if (whoamiAccountId && token) {
+      subdomain = (await getWorkersDevSubdomain(whoamiAccountId, token)) || '';
     }
   } catch {}
 
@@ -225,14 +280,36 @@ export async function setupCommand() {
     process.exit(1);
   }
 
-  console.log('\n✅ Setup complete. You can now run:');
-  console.log('   toss deploy');
+  // If profile mode: save auth to profile
+  if (profileName) {
+    const existingConfig = await loadConfig(profileName);
+    const config = existingConfig || { endpoint: '', ownerToken: '', subdomain: '' };
+
+    // Update auth fields
+    if (apiToken) config.apiToken = apiToken;
+    if (accountId) config.accountId = accountId;
+
+    await saveConfig(config, profileName);
+    await switchProfile(profileName);
+
+    console.log(`\n✅ Profile "${profileName}" configured with Cloudflare auth.`);
+    if (apiToken) {
+      console.log(`   Auth: API token (multi-account ready)`);
+    } else {
+      console.log(`   Auth: OAuth (global — use API token for multi-account)`);
+    }
+    console.log(`   Account: ${accountId}`);
+    console.log(`\n   Next: toss deploy --profile ${profileName}`);
+  } else {
+    console.log('\n✅ Setup complete. You can now run:');
+    console.log('   toss deploy');
+  }
 
   if (process.stdin.isTTY) {
     const go = await promptConfirm('Run deploy now?', true);
     if (go) {
       const { deployCommand } = await import('./deploy.js');
-      await deployCommand({});
+      await deployCommand(profileName ? { profile: profileName } : {});
     }
   }
 }
