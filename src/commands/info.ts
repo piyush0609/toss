@@ -1,4 +1,4 @@
-import { loadConfig } from '../lib/config.js';
+import { loadConfig, getActiveProfile } from '../lib/config.js';
 import { TossAPI } from '../lib/api.js';
 
 export async function infoCommand(options: { profile?: string } = {}) {
@@ -8,8 +8,11 @@ export async function infoCommand(options: { profile?: string } = {}) {
     process.exit(1);
   }
 
+  const activeProfile = await getActiveProfile();
+
   console.log('Toss Info');
   console.log('=========');
+  console.log(`Profile:   ${activeProfile || 'default'}`);
   console.log(`Endpoint:  ${config.endpoint}`);
   console.log(`Subdomain: ${config.subdomain}`);
   if (config.accountId) {

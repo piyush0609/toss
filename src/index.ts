@@ -11,7 +11,7 @@ import { setupCommand } from './commands/setup.js';
 import { skillInstallCommand, skillUninstallCommand, skillListCommand, skillUpdateCommand } from './commands/skill.js';
 import { tokenCreateCommand, tokenListCommand, tokenRevokeCommand, tokenRotateCommand } from './commands/token.js';
 import { joinCommand } from './commands/join.js';
-import { profileListCommand, profileSwitchCommand, profileShowCommand, profileDeleteCommand } from './commands/profile.js';
+import { profileListCommand, profileSwitchCommand, profileShowCommand, profileDeleteCommand, profileDefaultCommand, profileRenameCommand } from './commands/profile.js';
 
 const program = new Command();
 
@@ -34,7 +34,7 @@ program
   .requiredOption('-e, --expires <duration>', 'Link lifetime: 1h, 24h, 7d, 30d')
   .option('-c, --clipboard', 'Copy link to clipboard')
   .option('-j, --json', 'Output JSON')
-  .option('-p, --password <password>', 'Password-protect this share')
+  .option('-p, --password [password]', 'Password-protect this share (omit value for secure prompt)')
   .option('--profile <name>', 'Use a specific profile')
   .action(shareCommand);
 
@@ -123,6 +123,40 @@ token
   .command('rotate')
   .description('Regenerate admin token (invalidates old one)')
   .action(tokenRotateCommand);
+
+const profile = program
+  .command('profile')
+  .description('Manage toss profiles');
+
+profile
+  .command('list')
+  .description('List all profiles')
+  .action(profileListCommand);
+
+profile
+  .command('switch <name>')
+  .description('Switch active profile')
+  .action(profileSwitchCommand);
+
+profile
+  .command('show')
+  .description('Show current profile')
+  .action(profileShowCommand);
+
+profile
+  .command('default [name]')
+  .description('Show or set the active profile')
+  .action(profileDefaultCommand);
+
+profile
+  .command('rename <old> <new>')
+  .description('Rename a profile')
+  .action(profileRenameCommand);
+
+profile
+  .command('delete <name>')
+  .description('Delete a profile')
+  .action(profileDeleteCommand);
 
 program
   .command('join <endpoint>')

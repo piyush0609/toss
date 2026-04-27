@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import { join, relative } from 'path';
 import { loadConfig } from '../lib/config.js';
 import { TossAPI } from '../lib/api.js';
+import { promptPassword } from '../lib/prompt.js';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB KV limit
 const SKIP_DIRS = new Set(['node_modules', '__pycache__', 'dist', 'build', 'target', '.next', '.vercel', '.turbo', '.cache', 'out']);
@@ -66,7 +67,7 @@ async function walkDir(dir: string): Promise<string[]> {
   return files;
 }
 
-export async function shareCommand(file: string, options: { expires: string; clipboard?: boolean; json?: boolean; password?: string; profile?: string } = { expires: '24h' }) {
+export async function shareCommand(file: string, options: { expires: string; clipboard?: boolean; json?: boolean; password?: string | true; profile?: string } = { expires: '24h' }) {
   const config = await loadConfig(options.profile);
   if (!config) {
     console.error('Error: No toss found. Run "toss deploy" first.');
@@ -75,6 +76,23 @@ export async function shareCommand(file: string, options: { expires: string; cli
 
   const api = new TossAPI(config);
   const expires = parseDuration(options.expires);
+
+  // Handle password: --password with no value triggers interactive prompt
+  let password: string | undefined = undefined;
+  if (options.password === true) {
+    password = await promptPassword('Enter password: ');
+    if (!password) {
+      console.error('Error: Password cannot be empty.');
+      process.exit(1);
+    }
+  } else if (options.password) {
+    // Password provided via CLI arg — warn about shell history
+    if (process.stdin.isTTY) {
+      console.warn('⚠️  Warning: Passing passwords via command line exposes them in shell history.');
+      console.warn('   Use --password (no value) for secure interactive entry next time.\n');
+    }
+    password = options.password;
+  }
 
   let result: { id: string; slug: string; url: string; legacyUrl: string };
 
@@ -112,7 +130,7 @@ export async function shareCommand(file: string, options: { expires: string; cli
     const entryName = relative(file, entryFile).replace(/^\.\//, '');
     const entryHtml = await readFile(entryFile);
     try {
-      result = await api.upload(entryHtml, entryName, expires, options.password);
+      result = await api.upload(entryHtml, entryName, expires, password);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -147,7 +165,7 @@ export async function shareCommand(file: string, options: { expires: string; cli
     }
     const name = file.replace(/^\.\//, '');
     try {
-      result = await api.upload(html, name, expires, options.password);
+      result = await api.upload(html, name, expires, password);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -163,7 +181,7 @@ export async function shareCommand(file: string, options: { expires: string; cli
   } else {
     console.log(`\nLink:     ${result.url}`);
     if (result.legacyUrl) console.log(`Legacy:   ${result.legacyUrl}`);
-    if (options.password) console.log(`Password: ${options.password}`);
+    if (password) console.log(`Password: ${password}`);
     console.log(`Expires:  ${options.expires}`);
     if (options.clipboard) console.log('Copied to clipboard.');
     console.log(`Revoke:   toss revoke ${result.slug || result.id}\n`);

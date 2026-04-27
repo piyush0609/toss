@@ -20,9 +20,11 @@ metadata:
 Toss deploys a complete sharing infrastructure to your Cloudflare account:
 
 - **Cloudflare Worker** — Edge compute for upload, serve, list, delete
-- **D1 Database** — Metadata storage (id, name, size, expiry)
+- **D1 Database** — Metadata storage (id, name, size, expiry, slugs, passwords)
 - **KV Storage** — File storage (25MB/value limit)
-- **JWT Share Links** — Self-contained signed tokens with enforced expiry
+- **Short Share URLs** — Human-readable slugs like `q4-report-Q7x9`
+- **Password Protection** — SHA-256 hashed passwords with session cookie auth
+- **Multi-Tenant Mode** — Per-user tokens with admin/user roles
 
 ## When to Use This Skill
 
@@ -33,6 +35,8 @@ Use toss when:
 - Needing self-hosted sharing without relying on third-party services
 - Working in environments where data residency matters
 - Sharing content that should auto-expire (1h to 30d)
+- Password-protecting sensitive shared content
+- Running a team sharing service with per-user access control
 
 Don't use when:
 
@@ -51,42 +55,87 @@ Don't use when:
 curl -fsSL https://raw.githubusercontent.com/piyush0609/toss/main/install.sh | sh
 ```
 
+## Interactive Setup
 
-## Quick Start
+Toss guides you through setup with interactive prompts. Run each command and follow the questions.
 
-### 1. Run setup
+### Step 1: Prerequisites
 
 ```bash
 toss setup
 ```
 
-Handles all prerequisites interactively:
+This interactively:
 - Checks Node.js version
 - Installs Wrangler if missing
 - Authenticates with Cloudflare (browser OAuth or API token)
 - Verifies your workers.dev subdomain
-
-**Multi-account users:** If you have multiple Cloudflare accounts, setup extracts the account ID automatically. Use incognito mode or API tokens to switch accounts.
+- Optionally runs `toss deploy` immediately after
 
 **Login methods:**
 - **Browser login** — Opens Cloudflare OAuth. Use incognito/private mode to switch accounts.
 - **API token** — Paste a token from https://dash.cloudflare.com/profile/api-tokens. No browser needed.
 
-### 2. Deploy
+**Multi-account users:** If you have multiple Cloudflare accounts, use API tokens (stored per-profile) or incognito mode for browser login.
+
+### Step 2: Deploy
 
 ```bash
 toss deploy
-# Choose a subdomain, e.g. "you"
 ```
 
-### 3. Share
+Interactive prompts walk you through:
+
+**Profile selection:**
+```
+Existing profiles:
+  default
+  work
+Use an existing profile? (Y/n):
+```
+
+If no profiles exist:
+```
+Save this deployment as a named profile? (Y/n):
+Profile name (e.g. personal, work):
+```
+
+**Deployment mode:**
+```
+Deployment mode:
+  1. Single-user (personal use)
+  2. Multi-tenant team (shared with teammates)
+Select: 1
+```
+
+**Subdomain:**
+```
+Choose a subdomain (e.g., yourname): yourname
+```
+
+The deploy saves your config and automatically switches to the new profile as active.
+
+### Step 3: Share
 
 ```bash
+# Basic share
 toss share ./index.html --expires 24h
-toss share ./my-site --expires 7d
+
+# Password-protected share (secure interactive prompt)
+toss share ./report.html --expires 7d --password
+# You will be prompted to enter a password with hidden input.
+
+# Password via CLI (visible in shell history — not recommended)
+toss share ./report.html --expires 7d --password mysecret
 ```
 
-### 4. Manage
+**Password security:**
+- Use `--password` (no value) for a secure interactive prompt. Characters are hidden with `*`.
+- Passing `--password <value>` works but warns that the password is exposed in shell history.
+- Passwords are SHA-256 hashed with the artifact ID as salt before storage.
+- Recipients enter the password on a web form; a session cookie grants access for the link's lifetime.
+
+### Step 4: Manage
 
 ```bash
 toss list
@@ -95,24 +144,105 @@ toss info
 toss destroy
 ```
 
+## Profile System
+
+Profiles let you manage multiple toss deployments (personal, work, client projects, etc.).
+
+```bash
+# List all profiles
+toss profile list
+
+# Show current active profile
+toss profile show
+
+# Switch active profile
+toss profile switch work
+
+# Set active profile (alias for switch)
+toss profile default work
+
+# Show which profile is active
+toss profile default
+
+# Rename a profile
+toss profile rename old-name new-name
+
+# Delete a profile
+toss profile delete work
+```
+
+**Profile storage:**
+- `~/.toss/config.json` — default profile
+- `~/.toss/profiles.json` — named profiles + active marker
+
+**Multi-account deploy:** Each profile stores its own Cloudflare `apiToken` and `accountId`. Use `--profile` on any command to target a specific account without switching:
+
+```bash
+toss deploy --profile work
+toss share ./file.html --expires 24h --profile work
+```
+
+## Multi-Tenant Team Mode
+
+Enable during `toss deploy` by selecting "Multi-tenant team". This adds:
+
+- Per-user upload tokens stored in D1
+- Artifact ownership (users can only delete their own uploads)
+- Admin vs user roles
+
+**Admin commands:**
+```bash
+# Create a token for a teammate
+toss token create --label "alice"
+
+# List all tokens
+toss token list
+
+# Revoke a token
+toss token revoke <hash>
+
+# Regenerate admin token
+toss token rotate
+```
+
+**Teammate onboarding:**
+```bash
+toss join https://your-team.workers.dev --token <their-token> --profile team
+```
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `toss setup` | One-time setup: install wrangler, login, verify subdomain |
-| `toss deploy` | Deploy worker, D1, and KV to Cloudflare |
+| `toss deploy` | Deploy worker, D1, and KV to Cloudflare (interactive) |
 | `toss share <file> --expires <duration>` | Share an HTML file or folder |
+| `toss share <file> --password` | Share with secure password prompt |
 | `toss list` | List artifacts with size and expiry |
 | `toss revoke <id>` | Delete an artifact from KV and D1 |
 | `toss info` | Show endpoint, subdomain, KV ID, count |
 | `toss destroy` | Delete worker, D1, KV, and local config |
 | `toss doctor` | Check prerequisites (read-only) |
+| `toss profile list` | List all profiles |
+| `toss profile switch <name>` | Switch active profile |
+| `toss profile default [name]` | Show or set active profile |
+| `toss profile rename <old> <new>` | Rename a profile |
+| `toss profile delete <name>` | Delete a profile |
+| `toss token create --label <name>` | Create upload token (admin) |
+| `toss token list` | List tokens (admin) |
+| `toss token revoke <hash>` | Revoke token (admin) |
+| `toss join <endpoint> --token <token>` | Join a shared instance |
 
 ## Security Model
 
-- **Upload** — hex owner token stored in `~/.toss/config.json`
-- **Share links** — HS256 JWT with `sub` (artifact ID) and `exp` (expiry)
-- **Folder sub-files** — HttpOnly cookie scoped to `/a/{id}`
+- **Upload** — hex owner token stored in `~/.toss/config.json` (chmod 600)
+- **Share links** — Short slug URLs (`/s/:slug`) with optional password protection
+- **Legacy links** — HS256 JWT with `sub` (artifact ID) and `exp` (expiry)
+- **Passwords** — SHA-256(password + artifact.id) hashing, no plaintext storage
+- **Folder sub-files** — HttpOnly cookie scoped to `/s/:slug`
+- **Token comparison** — Constant-time comparison to prevent timing attacks
+- **Path traversal** — Validated on serve route
+- **Size limits** — 25MB enforced on Worker side
 
 ## Limitations
 
@@ -137,10 +267,23 @@ npm run build
 toss share ./dist --expires 7d
 ```
 
+### Password-protect a sensitive report
+
+```bash
+toss share ./financial-report.html --expires 7d --password
+# Enter password securely (hidden input)
+```
+
 ### CI integration
 
 ```bash
 toss share ./coverage-report/index.html --expires 1d --json | jq -r '.url'
+```
+
+### Deploy to work account
+
+```bash
+toss deploy --profile work
 ```
 
 ## References

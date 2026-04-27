@@ -1,21 +1,11 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { createInterface } from 'readline';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import { prompt, promptConfirm } from '../lib/prompt.js';
 
 const execAsync = promisify(exec);
-
-function prompt(q: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) =>
-    rl.question(q, (ans) => {
-      rl.close();
-      resolve(ans.trim());
-    })
-  );
-}
 
 async function getWranglerToken(): Promise<string | null> {
   const paths = [
@@ -237,4 +227,12 @@ export async function setupCommand() {
 
   console.log('\n✅ Setup complete. You can now run:');
   console.log('   toss deploy');
+
+  if (process.stdin.isTTY) {
+    const go = await promptConfirm('Run deploy now?', true);
+    if (go) {
+      const { deployCommand } = await import('./deploy.js');
+      await deployCommand({});
+    }
+  }
 }

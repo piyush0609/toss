@@ -78,17 +78,38 @@ export async function loadConfig(profile?: string): Promise<TossConfig | null> {
   }
 }
 
+export async function getActiveProfile(): Promise<string | undefined> {
+  const profiles = await readProfiles();
+  if (profiles?.active) return profiles.active;
+  const defaultExists = await fileExists(configFile());
+  return defaultExists ? 'default' : undefined;
+}
+
 export async function saveConfig(config: TossConfig, profile?: string): Promise<void> {
+  // If explicit profile given, save directly
   if (profile && profile !== 'default') {
     const profiles = (await readProfiles()) || { profiles: {} };
     profiles.profiles[profile] = config;
     await writeProfiles(profiles);
-  } else {
-    const dir = getTossDir();
-    await mkdir(dir, { recursive: true });
-    await writeFile(configFile(), JSON.stringify(config, null, 2));
-    await chmod(configFile(), 0o600);
+    return;
   }
+
+  // If no profile specified, follow same logic as loadConfig:
+  // save to active profile, or fall back to config.json
+  if (!profile) {
+    const profiles = await readProfiles();
+    if (profiles?.active && profiles.active !== 'default') {
+      profiles.profiles[profiles.active] = config;
+      await writeProfiles(profiles);
+      return;
+    }
+  }
+
+  // Save to default config.json
+  const dir = getTossDir();
+  await mkdir(dir, { recursive: true });
+  await writeFile(configFile(), JSON.stringify(config, null, 2));
+  await chmod(configFile(), 0o600);
 }
 
 export async function listProfiles(): Promise<{ active?: string; profiles: Record<string, TossConfig> }> {
@@ -119,6 +140,9 @@ export async function switchProfile(name: string): Promise<boolean> {
     if (profiles) {
       profiles.active = 'default';
       await writeProfiles(profiles);
+    } else {
+      // No profiles file yet — create one just to track active = default
+      await writeProfiles({ active: 'default', profiles: {} });
     }
     return true;
   }
@@ -142,5 +166,56 @@ export async function deleteProfile(name: string): Promise<boolean> {
     profiles.active = 'default';
   }
   await writeProfiles(profiles);
+  return true;
+}
+
+export async function renameProfile(oldName: string, newName: string): Promise<boolean> {
+  if (oldName === 'default' || newName === 'default') return false;
+  if (oldName === newName) return true;
+
+  const profiles = await readProfiles();
+  if (!profiles || !profiles.profiles[oldName]) return false;
+  if (profiles.profiles[newName]) return false; // target exists
+
+  profiles.profiles[newName] = profiles.profiles[oldName];
+  delete profiles.profiles[oldName];
+
+  if (profiles.active === oldName) {
+    profiles.active = newName;
+  }
+  await writeProfiles(profiles);
+  return true;
+}
+
+export async function copyProfile(from: string, to: string): Promise<boolean> {
+  if (from === to) return true;
+
+  const profiles = await readProfiles();
+  let sourceConfig: TossConfig | null = null;
+
+  if (from === 'default') {
+    try {
+      const raw = await readFile(configFile(), 'utf-8');
+      sourceConfig = JSON.parse(raw);
+    } catch {
+      return false;
+    }
+  } else {
+    if (!profiles || !profiles.profiles[from]) return false;
+    sourceConfig = profiles.profiles[from];
+  }
+
+  if (!sourceConfig) return false;
+
+  if (to === 'default') {
+    const dir = getTossDir();
+    await mkdir(dir, { recursive: true });
+    await writeFile(configFile(), JSON.stringify(sourceConfig, null, 2));
+    await chmod(configFile(), 0o600);
+  } else {
+    const p = profiles || { profiles: {} };
+    p.profiles[to] = sourceConfig;
+    await writeProfiles(p);
+  }
   return true;
 }

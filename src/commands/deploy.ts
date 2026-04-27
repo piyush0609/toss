@@ -1,25 +1,15 @@
 import { mkdir, writeFile, rm, readdir, copyFile, readFile } from 'fs/promises';
 import { join } from 'path';
-import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
-import { saveConfig } from '../lib/config.js';
+import { saveConfig, listProfiles, switchProfile } from '../lib/config.js';
+import { prompt, promptConfirm, promptSelect } from '../lib/prompt.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-function prompt(q: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) =>
-    rl.question(q, (ans) => {
-      rl.close();
-      resolve(ans.trim());
-    })
-  );
-}
 
 function generateToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -128,11 +118,56 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
     process.exit(1);
   }
 
+  // Interactive profile selection
+  let profileName = options.profile;
+  if (!profileName && process.stdin.isTTY) {
+    const { profiles, active } = await listProfiles();
+    const profileNames = Object.keys(profiles);
+    if (profileNames.length > 0) {
+      console.log('Existing profiles:');
+      profileNames.forEach((p) => {
+        const marker = p === active ? ' *' : '';
+        console.log(`  ${p}${marker}`);
+      });
+      const useExisting = await promptConfirm('Use an existing profile?', true);
+      if (useExisting) {
+        const choices = profileNames.map((p) => ({ label: p + (p === active ? ' (active)' : ''), value: p }));
+        profileName = await promptSelect('Select profile:', choices);
+      } else {
+        profileName = await prompt('Name for new profile: ');
+        if (!profileName || !/^[a-z0-9_-]+$/.test(profileName)) {
+          console.error('Error: Profile name must be lowercase alphanumeric with hyphens/underscores.');
+          process.exit(1);
+        }
+      }
+    } else {
+      const createProfile = await promptConfirm('Save this deployment as a named profile?', true);
+      if (createProfile) {
+        profileName = await prompt('Profile name (e.g. personal, work): ');
+        if (!profileName || !/^[a-z0-9_-]+$/.test(profileName)) {
+          console.error('Error: Profile name must be lowercase alphanumeric with hyphens/underscores.');
+          process.exit(1);
+        }
+      }
+    }
+  }
+
+  // Interactive deployment mode
+  let multiTenant = options.multiTenant;
+  if (multiTenant === undefined && process.stdin.isTTY) {
+    const mode = await promptSelect('Deployment mode:', [
+      { label: 'Single-user (personal use)', value: 'single' as const },
+      { label: 'Multi-tenant team (shared with teammates)', value: 'team' as const },
+    ]);
+    multiTenant = mode === 'team';
+    console.log();
+  }
+
   // Load profile if specified
   let profileConfig = null;
-  if (options.profile) {
+  if (profileName) {
     const { loadConfig } = await import('../lib/config.js');
-    profileConfig = await loadConfig(options.profile);
+    profileConfig = await loadConfig(profileName);
   }
 
   // Build wrangler environment: support API token per profile
@@ -228,7 +263,7 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
     ? `\n[[routes]]\npattern = "${customDomain}"\ncustom_domain = true\n`
     : '';
 
-  const multiTenantConfig = options.multiTenant
+  const multiTenantConfig = multiTenant
     ? `\n[vars]\nMULTI_TENANT = "true"\n`
     : '';
 
@@ -304,11 +339,16 @@ database_id = "${databaseId}"
     process.exit(1);
   }
 
-  await saveConfig({ endpoint: workerUrl, ownerToken, subdomain, kvId, accountId, apiToken }, options.profile);
+  await saveConfig({ endpoint: workerUrl, ownerToken, subdomain, kvId, accountId, apiToken }, profileName);
+
+  // Auto-switch to the deployed profile
+  if (profileName) {
+    await switchProfile(profileName);
+  }
 
   console.log('\n✅ Your toss is ready.');
   console.log(`   Endpoint: ${workerUrl}`);
-  if (options.multiTenant) {
+  if (multiTenant) {
     console.log(`   Mode:     Multi-tenant team service`);
     console.log(`   Admin:    toss token create --label "teammate"`);
   }
