@@ -82,8 +82,16 @@ export async function setupCommand(options: { profile?: string; subdomain?: stri
     console.log('Toss Setup\n==========\n');
   }
 
-  // Validate subdomain if provided
-  if (presetSubdomain && !/^[a-z0-9-]+$/.test(presetSubdomain)) {
+  // Prompt for subdomain if not provided and in TTY mode
+  let subdomain = presetSubdomain;
+  if (!subdomain && process.stdin.isTTY && !autoYes) {
+    subdomain = await prompt('Choose a deploy subdomain (e.g., rf, share, team): ');
+    if (subdomain && !/^[a-z0-9-]+$/.test(subdomain)) {
+      console.error('Error: Subdomain must be lowercase alphanumeric with hyphens only.');
+      process.exit(1);
+    }
+  }
+  if (subdomain && !/^[a-z0-9-]+$/.test(subdomain)) {
     console.error('Error: Subdomain must be lowercase alphanumeric with hyphens only.');
     process.exit(1);
   }
@@ -278,18 +286,18 @@ export async function setupCommand(options: { profile?: string; subdomain?: stri
 
   // Check workers.dev subdomain
   console.log('\nVerifying workers.dev subdomain...');
-  let subdomain = '';
+  let workersDevSubdomain = '';
   try {
     const { stdout } = await execAsync('wrangler whoami');
     const whoamiAccountId = getAccountIdFromWhoami(stdout);
     const token = apiToken || await getWranglerToken();
     if (whoamiAccountId && token) {
-      subdomain = (await getWorkersDevSubdomain(whoamiAccountId, token)) || '';
+      workersDevSubdomain = (await getWorkersDevSubdomain(whoamiAccountId, token)) || '';
     }
   } catch {}
 
-  if (subdomain) {
-    console.log(`✅ workers.dev subdomain: ${subdomain}`);
+  if (workersDevSubdomain) {
+    console.log(`✅ workers.dev subdomain: ${workersDevSubdomain}`);
   } else {
     console.log('❌ No workers.dev subdomain registered.');
     console.log('   Visit: https://dash.cloudflare.com/workers/onboarding');
@@ -305,7 +313,7 @@ export async function setupCommand(options: { profile?: string; subdomain?: stri
     // Update auth fields
     if (apiToken) config.apiToken = apiToken;
     if (accountId) config.accountId = accountId;
-    if (presetSubdomain) config.subdomain = presetSubdomain;
+    if (subdomain) config.subdomain = subdomain;
 
     await saveConfig(config, profileName);
     await switchProfile(profileName);
@@ -317,8 +325,8 @@ export async function setupCommand(options: { profile?: string; subdomain?: stri
       console.log(`   Auth: OAuth (global — use API token for multi-account)`);
     }
     console.log(`   Account: ${accountId}`);
-    if (presetSubdomain) {
-      console.log(`   Subdomain: ${presetSubdomain}`);
+    if (subdomain) {
+      console.log(`   Subdomain: ${subdomain}`);
     }
     console.log(`\n   Next: toss deploy --profile ${profileName}`);
   } else {
