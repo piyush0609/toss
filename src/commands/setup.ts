@@ -60,19 +60,22 @@ function getEmailFromWhoami(stdout: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-export async function setupCommand(options: { profile?: string; subdomain?: string } = {}) {
+export async function setupCommand(options: { profile?: string; subdomain?: string; yes?: boolean } = {}) {
   const profileName = options.profile;
   const presetSubdomain = options.subdomain;
+  const autoYes = options.yes || !process.stdin.isTTY;
 
   if (profileName) {
     console.log(`Toss Setup — Profile: ${profileName}\n==========\n`);
     const existing = await loadConfig(profileName);
     if (existing) {
       console.log(`Profile "${profileName}" already exists with endpoint: ${existing.endpoint}`);
-      const reauth = await promptConfirm('Re-configure auth for this profile?', true);
-      if (!reauth) {
-        console.log('Setup cancelled. Profile auth unchanged.');
-        return;
+      if (!autoYes) {
+        const reauth = await promptConfirm('Re-configure auth for this profile?', true);
+        if (!reauth) {
+          console.log('Setup cancelled. Profile auth unchanged.');
+          return;
+        }
       }
     }
   } else {
@@ -139,22 +142,29 @@ export async function setupCommand(options: { profile?: string; subdomain?: stri
     console.log(`✅ Authenticated as ${email}`);
 
     if (profileName) {
-      // For profile setup, always ask to confirm or re-auth
-      // so we can capture the auth details for this profile
-      const useCurrent = await promptConfirm('Use this account for the profile?', true);
-      if (useCurrent) {
+      if (autoYes) {
+        console.log('Auto-accepting current account for profile.');
         accountId = getAccountIdFromWhoami(whoamiStdout) || '';
       } else {
-        authOk = false;
+        const useCurrent = await promptConfirm('Use this account for the profile?', true);
+        if (useCurrent) {
+          accountId = getAccountIdFromWhoami(whoamiStdout) || '';
+        } else {
+          authOk = false;
+        }
       }
     } else {
-      const answer = await prompt('Use this account? (y/n): ');
-      if (answer.toLowerCase() !== 'y') {
-        console.log('Signing out...');
-        try {
-          await execAsync('wrangler logout');
-        } catch {}
-        authOk = false;
+      if (autoYes) {
+        console.log('Auto-accepting current account.');
+      } else {
+        const answer = await prompt('Use this account? (y/n): ');
+        if (answer.toLowerCase() !== 'y') {
+          console.log('Signing out...');
+          try {
+            await execAsync('wrangler logout');
+          } catch {}
+          authOk = false;
+        }
       }
     }
   }
