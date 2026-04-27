@@ -1,12 +1,12 @@
-name = "hull-worker"
+name = "toss-worker"
 main = "src/index.ts"
 compatibility_date = "2024-05-01"
 
 [[kv_namespaces]]
-binding = "HULL_KV"
+binding = "TOSS_KV"
 id = ""
 
 [[d1_databases]]
-binding = "HULL_DB"
-database_name = "hull-db"
+binding = "TOSS_DB"
+database_name = "toss-db"
 database_id = ""

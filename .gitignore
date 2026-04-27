@@ -4,7 +4,7 @@ dist-bin/
 .DS_Store
 *.log
 .idea/
-hull
 hello.html
-
+hull
+toss
 dist/

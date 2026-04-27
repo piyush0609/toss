@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-const RUN_E2E = process.env.HULL_E2E === '1';
+const RUN_E2E = process.env.TOSS_E2E === '1';
 const projectRoot = join(__dirname, '../..');
 
 describe.skipIf(!RUN_E2E)('Live E2E', () => {
@@ -21,7 +21,7 @@ describe.skipIf(!RUN_E2E)('Live E2E', () => {
     // Deploy non-interactively
     execSync('node dist/index.js deploy', {
       cwd: projectRoot,
-      env: { ...process.env, HOME: tempHome, HULL_SUBDOMAIN: subdomain },
+      env: { ...process.env, HOME: tempHome, TOSS_SUBDOMAIN: subdomain },
       stdio: 'pipe',
     });
 
