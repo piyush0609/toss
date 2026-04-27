@@ -220,8 +220,12 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
     console.log(`Using profile subdomain: ${profileSubdomain}`);
   }
 
-  const subdomain = process.env.TOSS_SUBDOMAIN || profileSubdomain || await prompt('Choose a subdomain (e.g., yourname): ');
-  if (!subdomain || !/^[a-z0-9-]+$/.test(subdomain)) {
+  let subdomain = process.env.TOSS_SUBDOMAIN || profileSubdomain || '';
+  if (!subdomain && process.stdin.isTTY) {
+    const answer = await prompt('Choose a subdomain suffix (press Enter for default "toss"): ');
+    subdomain = answer.trim();
+  }
+  if (subdomain && !/^[a-z0-9-]+$/.test(subdomain)) {
     console.error('Error: Subdomain must be lowercase alphanumeric with hyphens only.');
     process.exit(1);
   }
@@ -242,9 +246,9 @@ export async function deployCommand(options: { domain?: string; multiTenant?: bo
     }
   }
 
-  const workerName = `toss-${subdomain}`;
-  const dbName = `toss-db-${subdomain}`;
-  const kvTitle = `toss-kv-${subdomain}`;
+  const workerName = subdomain ? `toss-${subdomain}` : 'toss';
+  const dbName = subdomain ? `toss-db-${subdomain}` : 'toss-db';
+  const kvTitle = subdomain ? `toss-kv-${subdomain}` : 'toss-kv';
   const workerDir = join(process.env.HOME || process.env.USERPROFILE || '.', '.toss', 'worker');
   const ownerToken = generateToken();
   const jwtSecret = generateToken();
