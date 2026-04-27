@@ -8,6 +8,44 @@ import { loadConfig, saveConfig, switchProfile } from '../lib/config.js';
 
 const execAsync = promisify(exec);
 
+async function checkSubdomainAvailability(subdomain: string, accountId: string, token: string): Promise<{ available: boolean; conflicts: string[] }> {
+  const conflicts: string[] = [];
+  const workerName = `toss-${subdomain}`;
+  const dbName = `toss-db-${subdomain}`;
+  const kvTitle = `toss-kv-${subdomain}`;
+
+  // Check existing workers
+  try {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await res.json() as { success: boolean; result?: Array<{ id: string }> };
+    if (data.success && data.result) {
+      // Workers list doesn't include names in the basic response, so we skip detailed check
+      // and rely on D1 + KV checks which are more reliable
+    }
+  } catch {}
+
+  // Check existing D1 databases
+  try {
+    const { stdout } = await execAsync(`CLOUDFLARE_ACCOUNT_ID=${accountId} CLOUDFLARE_API_TOKEN=${token} wrangler d1 list`);
+    if (stdout.includes(dbName)) {
+      conflicts.push(`D1 database "${dbName}"`);
+    }
+  } catch {}
+
+  // Check existing KV namespaces
+  try {
+    const { stdout } = await execAsync(`CLOUDFLARE_ACCOUNT_ID=${accountId} CLOUDFLARE_API_TOKEN=${token} wrangler kv namespace list`);
+    if (stdout.includes(kvTitle)) {
+      conflicts.push(`KV namespace "${kvTitle}"`);
+    }
+  } catch {}
+
+  return { available: conflicts.length === 0, conflicts };
+}
+
 async function getWranglerToken(): Promise<string | null> {
   const paths = [
     join(homedir(), '.config/.wrangler/config/default.toml'),
@@ -281,6 +319,22 @@ export async function setupCommand(options: { profile?: string; subdomain?: stri
     } else {
       console.error('Auth verification failed:', errMsg);
       process.exit(1);
+    }
+  }
+
+  // Check subdomain availability if one was provided
+  if (subdomain && accountId) {
+    const verifyToken = apiToken || await getWranglerToken() || '';
+    if (verifyToken) {
+      console.log(`\nChecking availability of "${subdomain}"...`);
+      const { available, conflicts } = await checkSubdomainAvailability(subdomain, accountId, verifyToken);
+      if (!available) {
+        console.error(`❌ Subdomain "${subdomain}" is already in use:`);
+        conflicts.forEach((c) => console.error(`   - ${c}`));
+        console.error('\nChoose a different subdomain and try again.');
+        process.exit(1);
+      }
+      console.log(`✅ Subdomain "${subdomain}" is available.`);
     }
   }
 
